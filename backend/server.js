@@ -1,7 +1,7 @@
-// backend/server.js
 const express = require('express');
 const cors = require('cors');
-const { BlockFrostAPI } = require("@blockfrost/blockfrost-js");
+const { authenticator } = require('otplib');
+const { BlockFrostAPI } = require('@blockfrost/blockfrost-js');
 require('dotenv').config();
 
 const app = express();
@@ -10,37 +10,76 @@ app.use(express.json());
 
 const api = new BlockFrostAPI({
   projectId: process.env.BLOCKFROST_KEY,
-  network: "preprod",
+  network: 'preprod',
 });
 
-// Database (Using a simple object for now - in production use MongoDB/PostgreSQL)
-let registeredStudents = {}; 
+// In-memory storage (replace with a real DB later)
+const registeredStudents = {}; // { walletAddress: studentId }
+const activeSessions = {};     // { sessionKey: { classId, expiresAt } }
 
-// 1. Register Wallet Endpoint
+// ── Route 1: Register student wallet ─────────────────────────────────────────
 app.post('/register', (req, res) => {
-    const { studentId, walletAddress } = req.body;
-    registeredStudents[studentId] = walletAddress;
-    console.log(`Registered: ${studentId} with address ${walletAddress}`);
-    res.json({ success: true, message: "Student registered locally!" });
+  const { studentId, walletAddress } = req.body;
+  if (!studentId || !walletAddress) {
+    return res.status(400).json({ error: 'studentId and walletAddress are required' });
+  }
+  registeredStudents[walletAddress] = studentId;
+  console.log(`Registered: ${studentId} -> ${walletAddress}`);
+  res.json({ success: true, message: `Wallet linked to ${studentId}` });
 });
 
-// 2. Attendance Endpoint (Submits metadata to Cardano)
-app.post('/mark-attendance', async (req, res) => {
-    const { studentId, sessionCode } = req.body;
-    const wallet = registeredStudents[studentId];
+// ── Route 2: Start a session and get session key ──────────────────────────────
+app.post('/session/start', (req, res) => {
+  const { classId } = req.body;
+  if (!classId) return res.status(400).json({ error: 'classId required' });
 
-    if (!wallet) return res.status(400).json({ error: "Student not registered" });
+  const sessionKey = authenticator.generate(process.env.TOTP_SECRET || 'classter-secret');
+  const expiresAt = Date.now() + 30000; // 30 seconds
+  activeSessions[sessionKey] = { classId, expiresAt };
 
-    try {
-        // This is where you'd typically build a transaction. 
-        // For a beginner, we'll start by logging the intent to the blockchain metadata.
-        console.log(`Sending Attendance for ${studentId} to Cardano...`);
-        
-        // Note: Real transactions require a "Signing" step from a wallet.
-        res.json({ success: true, status: "Attendance Logged", studentId });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+  res.json({ sessionKey, classId, expiresAt });
 });
 
-app.listen(5000, () => console.log('Backend running on port 5000'));
+// ── Route 3: Student checks in ────────────────────────────────────────────────
+app.post('/checkin', async (req, res) => {
+  const { walletAddress, sessionKey, classId } = req.body;
+
+  // 1. Verify session key is still valid
+  const session = activeSessions[sessionKey];
+  if (!session || Date.now() > session.expiresAt) {
+    return res.status(400).json({ error: 'QR code expired. Ask teacher to refresh.' });
+  }
+  if (session.classId !== classId) {
+    return res.status(400).json({ error: 'Wrong class.' });
+  }
+
+  // 2. Verify wallet is registered
+  const studentId = registeredStudents[walletAddress];
+  if (!studentId) {
+    return res.status(400).json({ error: 'Wallet not registered. Contact your registrar.' });
+  }
+
+  // 3. Log attendance (blockchain metadata would go here in production)
+  // For now we confirm the check-in and return success
+  console.log(`Check-in: ${studentId} in ${classId} at ${new Date().toISOString()}`);
+
+  res.json({
+    success: true,
+    studentId,
+    classId,
+    timestamp: new Date().toISOString(),
+    message: 'Attendance recorded!',
+  });
+});
+
+// ── Route 4: Get latest block height from Cardano ─────────────────────────────
+app.get('/block', async (req, res) => {
+  try {
+    const block = await api.blocksLatest();
+    res.json({ height: block.height });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.listen(4000, () => console.log('ClassTer backend running on http://localhost:4000'));
