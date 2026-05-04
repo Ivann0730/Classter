@@ -57,7 +57,7 @@ export default function StudentCheckin({ activeSession }) {
 
     try {
       // Step 1 — Verify session key with backend
-      const res = await fetch("http://localhost:4000/checkin", {
+      const res = await fetch("http://192.168.1.22:4000/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress, sessionKey, classId }),

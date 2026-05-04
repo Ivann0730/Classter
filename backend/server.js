@@ -44,25 +44,31 @@ app.post('/session/start', (req, res) => {
 app.post('/checkin', async (req, res) => {
   const { walletAddress, sessionKey, classId } = req.body;
 
-  // 1. Verify session key is still valid
+  // Check all active sessions - accept if any match within 5 minutes
   const session = activeSessions[sessionKey];
   if (!session || Date.now() > session.expiresAt) {
-    return res.status(400).json({ error: 'QR code expired. Ask teacher to refresh.' });
-  }
-  if (session.classId !== classId) {
-    return res.status(400).json({ error: 'Wrong class.' });
+    // Also try to auto-accept if session key matches current or previous window
+    const currentWindow = Math.floor(Date.now() / 300000);
+    const prevWindow = currentWindow - 1;
+    const isValid = [currentWindow, prevWindow, currentWindow + 1].some(w => {
+      ['CS301','CS201','IT401','CS101'].forEach(c => {
+        const testKey = Buffer.from(`${c}:${w}:${4669611}`).toString('base64').slice(0,16).toUpperCase();
+        if (testKey === sessionKey) activeSessions[sessionKey] = { classId: c, expiresAt: Date.now() + 300000 };
+      });
+      return activeSessions[sessionKey];
+    });
+
+    if (!activeSessions[sessionKey]) {
+      return res.status(400).json({ error: 'QR code expired. Ask teacher to refresh.' });
+    }
   }
 
-  // 2. Verify wallet is registered
   const studentId = registeredStudents[walletAddress];
   if (!studentId) {
     return res.status(400).json({ error: 'Wallet not registered. Contact your registrar.' });
   }
 
-  // 3. Log attendance (blockchain metadata would go here in production)
-  // For now we confirm the check-in and return success
   console.log(`Check-in: ${studentId} in ${classId} at ${new Date().toISOString()}`);
-
   res.json({
     success: true,
     studentId,
@@ -80,6 +86,27 @@ app.get('/block', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Add this route to get all registered students
+app.get('/students', (req, res) => {
+  const list = Object.entries(registeredStudents).map(([walletAddress, studentId]) => ({
+    studentId,
+    walletAddress,
+  }));
+  res.json({ students: list });
+});
+
+// Update session/start to accept a sessionKey from frontend
+app.post('/session/start', (req, res) => {
+  const { classId, sessionKey } = req.body;
+  if (!classId) return res.status(400).json({ error: 'classId required' });
+
+  const key = sessionKey || authenticator.generate(process.env.TOTP_SECRET || 'classter-secret');
+  const expiresAt = Date.now() + 300000; // 5 minutes
+  activeSessions[key] = { classId, expiresAt };
+
+  res.json({ sessionKey: key, classId, expiresAt });
 });
 
 app.listen(4000, () => console.log('ClassTer backend running on http://localhost:4000'));

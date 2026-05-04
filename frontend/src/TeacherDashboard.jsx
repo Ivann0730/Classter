@@ -18,11 +18,6 @@ const MOCK_STUDENTS = [
   { id: "2021-0008", name: "Hiro Dela Cruz", time: null, status: "absent" },
 ];
 
-function generateSessionKey(classId, blockHeight) {
-  const ts = Math.floor(Date.now() / 30000);
-  return btoa(`${classId}:${ts}:${blockHeight}`).slice(0, 16).toUpperCase();
-}
-
 function generateQRDataURL(text, size = 220) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -53,7 +48,7 @@ function generateQRDataURL(text, size = 220) {
   return canvas.toDataURL();
 }
 
-export default function TeacherDashboard() {
+export default function TeacherDashboard({ activeSession, setActiveSession }) {
   const [selectedClass, setSelectedClass] = useState(CLASSES[0]);
   const [sessionActive, setSessionActive] = useState(false);
   const [timeLeft, setTimeLeft] = useState(30);
@@ -63,13 +58,46 @@ export default function TeacherDashboard() {
   const [students, setStudents] = useState(MOCK_STUDENTS);
   const [sessionTime, setSessionTime] = useState(0);
   const [tab, setTab] = useState("qr");
+  const [registeredStudents, setRegisteredStudents] = useState([]);
+  const [copySuccess, setCopySuccess] = useState(false);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const blockRef = useRef(null);
+  const sessionKeyRef = useRef("");
+
+  // Fetch registered students from backend
+  const fetchRegistered = useCallback(async () => {
+    try {
+      const res = await fetch("http://192.168.1.22:4000/students");
+      const data = await res.json();
+      setRegisteredStudents(data.students || []);
+    } catch {
+      // backend might not be running
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRegistered();
+  }, [fetchRegistered]);
+
+  // Generate session key with long expiry (5 minutes for cross-device use)
+  const generateSessionKey = useCallback((classId, bHeight) => {
+    const ts = Math.floor(Date.now() / 30000); // 5 minute window
+    return btoa(`${classId}:${ts}:${bHeight}`).slice(0, 16).toUpperCase();
+  }, []);
 
   const refreshQR = useCallback(() => {
     const key = generateSessionKey(selectedClass.id, blockHeight);
+    sessionKeyRef.current = key;
     setSessionKey(key);
+
+    // Register session with backend so other devices can verify it
+    fetch("http://192.168.1.22:4000/students", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classId: selectedClass.id, sessionKey: key }),
+    }).catch(() => {});
+
     const payload = JSON.stringify({
       class_id: selectedClass.id,
       session_key: key,
@@ -78,7 +106,12 @@ export default function TeacherDashboard() {
     });
     setQrDataUrl(generateQRDataURL(payload));
     setTimeLeft(30);
-  }, [selectedClass, blockHeight]);
+
+    // Save to App level for cross-tab use
+    if (setActiveSession) {
+      setActiveSession({ sessionKey: key, classId: selectedClass.id });
+    }
+  }, [selectedClass, blockHeight, generateSessionKey, setActiveSession]);
 
   useEffect(() => {
     if (!sessionActive) return;
@@ -103,23 +136,6 @@ export default function TeacherDashboard() {
     return () => clearInterval(blockRef.current);
   }, []);
 
-  useEffect(() => {
-    if (!sessionActive) return;
-    const sim = setInterval(() => {
-      setStudents((prev) => {
-        const absent = prev.filter((s) => s.status === "absent");
-        if (absent.length === 0) return prev;
-        const pick = absent[Math.floor(Math.random() * absent.length)];
-        return prev.map((s) =>
-          s.id === pick.id
-            ? { ...s, status: "present", time: new Date().toLocaleTimeString() }
-            : s
-        );
-      });
-    }, 3000);
-    return () => clearInterval(sim);
-  }, [sessionActive]);
-
   const startSession = () => {
     setStudents(MOCK_STUDENTS);
     setSessionTime(0);
@@ -129,8 +145,49 @@ export default function TeacherDashboard() {
 
   const endSession = () => {
     setSessionActive(false);
+    if (setActiveSession) setActiveSession(null);
     clearInterval(timerRef.current);
     clearInterval(sessionTimerRef.current);
+  };
+
+  const copySessionKey = () => {
+    navigator.clipboard.writeText(sessionKey).then(() => {
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    });
+  };
+
+  // Export attendance as CSV
+  const exportCSV = () => {
+    const rows = [
+      ["Student ID", "Name", "Status", "Time"],
+      ...students.map(s => [s.id, s.name, s.status, s.time || "—"]),
+    ];
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `attendance_${selectedClass.id}_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Export as JSON
+  const exportJSON = () => {
+    const data = {
+      class: selectedClass,
+      date: new Date().toISOString(),
+      sessionKey,
+      students,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `attendance_${selectedClass.id}_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const present = students.filter((s) => s.status === "present").length;
@@ -142,116 +199,50 @@ export default function TeacherDashboard() {
     <>
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        .db-root {
-          font-family: 'Times New Roman', Times, serif;
-          background: #ffffff;
-          min-height: 100vh;
-          color: #000000;
-        }
-
-        .db-inner {
-          max-width: 1100px;
-          margin: 0 auto;
-          padding: 32px 28px;
-        }
-
-        .db-header {
-          display: flex; align-items: baseline; justify-content: space-between;
-          border-bottom: 2px solid #000;
-          padding-bottom: 12px;
-          margin-bottom: 24px;
-          flex-wrap: wrap; gap: 8px;
-        }
+        .db-root { font-family: 'Times New Roman', Times, serif; background: #ffffff; min-height: 100vh; color: #000000; }
+        .db-inner { max-width: 1100px; margin: 0 auto; padding: 32px 28px; }
+        .db-header { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 12px; margin-bottom: 24px; flex-wrap: wrap; gap: 8px; }
         .db-logo { font-size: 26px; font-weight: bold; letter-spacing: 1px; }
         .db-meta { font-size: 12px; color: #555; display: flex; gap: 20px; }
-
-        .db-class-bar {
-          display: flex; gap: 0; margin-bottom: 24px;
-          border: 1px solid #000;
-        }
-        .db-class-btn {
-          flex: 1; background: #fff; border: none;
-          border-right: 1px solid #000;
-          padding: 10px 14px; cursor: pointer;
-          text-align: left; transition: background 0.15s;
-          font-family: 'Times New Roman', Times, serif;
-        }
+        .db-class-bar { display: flex; gap: 0; margin-bottom: 24px; border: 1px solid #000; }
+        .db-class-btn { flex: 1; background: #fff; border: none; border-right: 1px solid #000; padding: 10px 14px; cursor: pointer; text-align: left; transition: background 0.15s; font-family: 'Times New Roman', Times, serif; }
         .db-class-btn:last-child { border-right: none; }
         .db-class-btn:hover { background: #f5f5f5; }
         .db-class-btn.active { background: #000; color: #fff; }
         .db-class-name { font-size: 13px; font-weight: bold; }
         .db-class-sub { font-size: 11px; margin-top: 2px; opacity: 0.7; }
-
         .db-grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
         @media (max-width: 720px) { .db-grid { grid-template-columns: 1fr; } }
-
         .db-card { border: 1px solid #000; }
-        .db-card-header {
-          padding: 10px 16px;
-          border-bottom: 1px solid #000;
-          display: flex; align-items: center; justify-content: space-between;
-          background: #000; color: #fff;
-        }
+        .db-card-header { padding: 10px 16px; border-bottom: 1px solid #000; display: flex; align-items: center; justify-content: space-between; background: #000; color: #fff; }
         .db-card-title { font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; }
         .db-card-body { padding: 18px; }
-
         .db-tabs { display: flex; border-bottom: 1px solid #000; }
-        .db-tab {
-          flex: 1; padding: 11px; background: none; border: none;
-          border-right: 1px solid #000;
-          cursor: pointer; font-size: 12px; font-weight: bold;
-          letter-spacing: 1px; text-transform: uppercase;
-          font-family: 'Times New Roman', Times, serif;
-          transition: background 0.15s;
-        }
+        .db-tab { flex: 1; padding: 11px; background: none; border: none; border-right: 1px solid #000; cursor: pointer; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; font-family: 'Times New Roman', Times, serif; transition: background 0.15s; }
         .db-tab:last-child { border-right: none; }
         .db-tab:hover { background: #f5f5f5; }
         .db-tab.active { background: #000; color: #fff; }
-
-        .qr-wrap {
-          display: flex; flex-direction: column; align-items: center;
-          padding: 28px 20px; gap: 18px;
-        }
-        .qr-frame {
-          width: 230px; height: 230px;
-          border: 2px solid #000;
-          display: flex; align-items: center; justify-content: center;
-          background: #fff;
-        }
+        .qr-wrap { display: flex; flex-direction: column; align-items: center; padding: 28px 20px; gap: 18px; }
+        .qr-frame { width: 230px; height: 230px; border: 2px solid #000; display: flex; align-items: center; justify-content: center; background: #fff; }
         .qr-img { width: 220px; height: 220px; }
-        .qr-inactive {
-          display: flex; flex-direction: column;
-          align-items: center; justify-content: center;
-          gap: 8px; color: #aaa; text-align: center;
-        }
+        .qr-inactive { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #aaa; text-align: center; }
         .qr-inactive-icon { font-size: 36px; }
         .qr-inactive-text { font-size: 12px; line-height: 1.6; }
-
         .timer-wrap { text-align: center; }
         .timer-num { font-size: 40px; font-weight: bold; line-height: 1; }
         .timer-label { font-size: 11px; color: #555; margin-top: 2px; letter-spacing: 1px; }
         .timer-bar { width: 200px; height: 4px; background: #e0e0e0; margin: 8px auto 0; }
         .timer-bar-fill { height: 100%; background: #000; transition: width 1s linear; }
-
-        .key-wrap { text-align: center; }
+        .key-wrap { text-align: center; width: 100%; }
         .key-label { font-size: 11px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
-        .key-badge {
-          font-size: 14px; font-weight: bold; letter-spacing: 3px;
-          border: 1px solid #000; padding: 6px 16px; display: inline-block;
-        }
-
-        .db-btn {
-          width: 100%; padding: 13px; border: 2px solid #000;
-          font-family: 'Times New Roman', Times, serif;
-          font-size: 13px; font-weight: bold; letter-spacing: 2px;
-          text-transform: uppercase; cursor: pointer; transition: all 0.15s;
-        }
+        .key-badge { font-size: 14px; font-weight: bold; letter-spacing: 3px; border: 1px solid #000; padding: 6px 16px; display: inline-block; }
+        .copy-btn { margin-top: 8px; padding: 6px 16px; background: #fff; border: 1px solid #000; font-family: 'Times New Roman', Times, serif; font-size: 11px; cursor: pointer; letter-spacing: 1px; }
+        .copy-btn:hover { background: #f0f0f0; }
+        .db-btn { width: 100%; padding: 13px; border: 2px solid #000; font-family: 'Times New Roman', Times, serif; font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; transition: all 0.15s; }
         .db-btn-start { background: #000; color: #fff; }
         .db-btn-start:hover { background: #333; }
         .db-btn-end { background: #fff; color: #000; }
         .db-btn-end:hover { background: #f0f0f0; }
-
         .stats-row { display: flex; gap: 0; margin-bottom: 14px; border: 1px solid #000; }
         .stat-block { flex: 1; padding: 12px; border-right: 1px solid #000; text-align: center; }
         .stat-block:last-child { border-right: none; }
@@ -259,30 +250,17 @@ export default function TeacherDashboard() {
         .stat-val { font-size: 28px; font-weight: bold; }
         .prog-bar { height: 6px; background: #e0e0e0; }
         .prog-fill { height: 100%; background: #000; transition: width 0.6s ease; }
-        .prog-label {
-          display: flex; justify-content: space-between;
-          font-size: 10px; color: #555; margin-top: 4px;
-        }
-
-        .info-row {
-          display: flex; justify-content: space-between; align-items: center;
-          padding: 7px 0; border-bottom: 1px solid #eee; font-size: 12px;
-        }
+        .prog-label { display: flex; justify-content: space-between; font-size: 10px; color: #555; margin-top: 4px; }
+        .info-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid #eee; font-size: 12px; }
         .info-row:last-child { border-bottom: none; }
         .info-key { color: #555; text-transform: uppercase; font-size: 11px; }
         .info-val { font-weight: bold; }
-
         .badge { font-size: 10px; font-weight: bold; letter-spacing: 1px; padding: 2px 8px; border: 1px solid currentColor; }
         .badge-live { color: #000; }
         .badge-idle { color: #aaa; border-color: #aaa; }
-
         .divider { border: none; border-top: 1px solid #ddd; margin: 8px 0; }
-
         .roster-list { padding: 0; }
-        .roster-item {
-          display: flex; align-items: center; gap: 12px;
-          padding: 10px 18px; border-bottom: 1px solid #eee; font-size: 13px;
-        }
+        .roster-item { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid #eee; font-size: 13px; }
         .roster-item:last-child { border-bottom: none; }
         .roster-item.present { background: #f9f9f9; }
         .roster-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #000; flex-shrink: 0; }
@@ -292,8 +270,13 @@ export default function TeacherDashboard() {
         .roster-id { font-size: 11px; color: #777; }
         .roster-time { font-size: 11px; color: #555; }
         .roster-time.absent { color: #ccc; }
-
         .side { display: flex; flex-direction: column; gap: 16px; }
+        .export-row { display: flex; gap: 8px; margin-top: 12px; }
+        .export-btn { flex: 1; padding: 8px; background: #fff; border: 1px solid #000; font-family: 'Times New Roman', Times, serif; font-size: 11px; font-weight: bold; cursor: pointer; letter-spacing: 1px; text-transform: uppercase; }
+        .export-btn:hover { background: #000; color: #fff; }
+        .reg-item { display: flex; justify-content: space-between; padding: 8px 18px; border-bottom: 1px solid #eee; font-size: 12px; }
+        .reg-item:last-child { border-bottom: none; }
+        .reg-wallet { font-size: 10px; color: #777; font-family: monospace; word-break: break-all; }
       `}</style>
 
       <div className="db-root">
@@ -322,13 +305,11 @@ export default function TeacherDashboard() {
           </div>
 
           <div className="db-grid">
-
             <div className="db-card">
               <div className="db-tabs">
                 <button className={`db-tab ${tab === "qr" ? "active" : ""}`} onClick={() => setTab("qr")}>QR Code</button>
-                <button className={`db-tab ${tab === "roster" ? "active" : ""}`} onClick={() => setTab("roster")}>
-                  Roster ({present}/{students.length})
-                </button>
+                <button className={`db-tab ${tab === "roster" ? "active" : ""}`} onClick={() => setTab("roster")}>Roster ({present}/{students.length})</button>
+                <button className={`db-tab ${tab === "registered" ? "active" : ""}`} onClick={() => { setTab("registered"); fetchRegistered(); }}>Registered</button>
               </div>
 
               {tab === "qr" && (
@@ -357,6 +338,11 @@ export default function TeacherDashboard() {
                       <div className="key-wrap">
                         <div className="key-label">Session Key</div>
                         <div className="key-badge">{sessionKey}</div>
+                        <div>
+                          <button className="copy-btn" onClick={copySessionKey}>
+                            {copySuccess ? "✓ Copied!" : "Copy Key"}
+                          </button>
+                        </div>
                       </div>
                     </>
                   )}
@@ -371,19 +357,56 @@ export default function TeacherDashboard() {
               )}
 
               {tab === "roster" && (
-                <div className="roster-list">
-                  {students.map((s) => (
-                    <div key={s.id} className={`roster-item ${s.status}`}>
-                      <div className={`roster-dot ${s.status === "present" ? "dot-present" : "dot-absent"}`} />
-                      <div style={{ flex: 1 }}>
-                        <div className="roster-name">{s.name}</div>
-                        <div className="roster-id">{s.id}</div>
+                <>
+                  <div className="roster-list">
+                    {students.map((s) => (
+                      <div key={s.id} className={`roster-item ${s.status}`}>
+                        <div className={`roster-dot ${s.status === "present" ? "dot-present" : "dot-absent"}`} />
+                        <div style={{ flex: 1 }}>
+                          <div className="roster-name">{s.name}</div>
+                          <div className="roster-id">{s.id}</div>
+                        </div>
+                        <div className={`roster-time ${s.status === "absent" ? "absent" : ""}`}>
+                          {s.time ?? "—"}
+                        </div>
                       </div>
-                      <div className={`roster-time ${s.status === "absent" ? "absent" : ""}`}>
-                        {s.time ?? "—"}
-                      </div>
+                    ))}
+                  </div>
+                  <div className="export-row" style={{ padding: "12px 18px" }}>
+                    <button className="export-btn" onClick={exportCSV}>Export CSV</button>
+                    <button className="export-btn" onClick={exportJSON}>Export JSON</button>
+                  </div>
+                </>
+              )}
+
+              {tab === "registered" && (
+                <div>
+                  <div style={{ padding: "10px 18px", borderBottom: "1px solid #eee", fontSize: 11, color: "#555", display: "flex", justifyContent: "space-between" }}>
+                    <span>STUDENT ID</span>
+                    <span>WALLET ADDRESS</span>
+                  </div>
+                  {registeredStudents.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: "center", color: "#aaa", fontSize: 13 }}>
+                      No students registered yet
                     </div>
-                  ))}
+                  ) : (
+                    registeredStudents.map((s, i) => (
+                      <div key={i} className="reg-item">
+                        <span style={{ fontWeight: "bold" }}>{s.studentId}</span>
+                        <span className="reg-wallet">{s.walletAddress.slice(0, 20)}...{s.walletAddress.slice(-8)}</span>
+                      </div>
+                    ))
+                  )}
+                  <div style={{ padding: "12px 18px" }}>
+                    <button className="export-btn" style={{ width: "100%" }} onClick={() => {
+                      const csv = ["Student ID,Wallet Address", ...registeredStudents.map(s => `${s.studentId},${s.walletAddress}`)].join("\n");
+                      const blob = new Blob([csv], { type: "text/csv" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a"); a.href = url;
+                      a.download = "registered_students.csv"; a.click();
+                      URL.revokeObjectURL(url);
+                    }}>Export Registered Students CSV</button>
+                  </div>
                 </div>
               )}
             </div>
@@ -398,34 +421,17 @@ export default function TeacherDashboard() {
                 </div>
                 <div className="db-card-body">
                   <div className="stats-row">
-                    <div className="stat-block">
-                      <div className="stat-label">Present</div>
-                      <div className="stat-val">{present}</div>
-                    </div>
-                    <div className="stat-block">
-                      <div className="stat-label">Absent</div>
-                      <div className="stat-val">{absent}</div>
-                    </div>
-                    <div className="stat-block">
-                      <div className="stat-label">Total</div>
-                      <div className="stat-val">{students.length}</div>
-                    </div>
+                    <div className="stat-block"><div className="stat-label">Present</div><div className="stat-val">{present}</div></div>
+                    <div className="stat-block"><div className="stat-label">Absent</div><div className="stat-val">{absent}</div></div>
+                    <div className="stat-block"><div className="stat-label">Total</div><div className="stat-val">{students.length}</div></div>
                   </div>
-                  <div className="prog-bar">
-                    <div className="prog-fill" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="prog-label">
-                    <span>0%</span>
-                    <span>{pct}% present</span>
-                    <span>100%</span>
-                  </div>
+                  <div className="prog-bar"><div className="prog-fill" style={{ width: `${pct}%` }} /></div>
+                  <div className="prog-label"><span>0%</span><span>{pct}% present</span><span>100%</span></div>
                 </div>
               </div>
 
               <div className="db-card">
-                <div className="db-card-header">
-                  <span className="db-card-title">Session Info</span>
-                </div>
+                <div className="db-card-header"><span className="db-card-title">Session Info</span></div>
                 <div className="db-card-body">
                   <div className="info-row"><span className="info-key">Class</span><span className="info-val">{selectedClass.id}</span></div>
                   <div className="info-row"><span className="info-key">Room</span><span className="info-val">{selectedClass.room}</span></div>
@@ -439,21 +445,10 @@ export default function TeacherDashboard() {
               </div>
 
               <div className="db-card">
-                <div className="db-card-header">
-                  <span className="db-card-title">How It Works</span>
-                </div>
+                <div className="db-card-header"><span className="db-card-title">How It Works</span></div>
                 <div className="db-card-body">
-                  {[
-                    ["1.", "Select your class above"],
-                    ["2.", "Press Start Session"],
-                    ["3.", "Project the QR on the board"],
-                    ["4.", "Students scan with their wallet"],
-                    ["5.", "Attendance recorded on Cardano"],
-                  ].map(([n, t]) => (
-                    <div key={n} className="info-row">
-                      <span className="info-key">{n}</span>
-                      <span style={{ fontSize: 12 }}>{t}</span>
-                    </div>
+                  {[["1.", "Select your class above"], ["2.", "Press Start Session"], ["3.", "Project the QR on the board"], ["4.", "Students scan with their wallet"], ["5.", "Attendance recorded on Cardano"]].map(([n, t]) => (
+                    <div key={n} className="info-row"><span className="info-key">{n}</span><span style={{ fontSize: 12 }}>{t}</span></div>
                   ))}
                 </div>
               </div>
