@@ -1,6 +1,18 @@
 {
   "dependencies": {
+    "@blockfrost/blockfrost-js": "^6.1.1",
+    "@craco/craco": "^7.1.0",
     "@meshsdk/core": "^1.9.0-beta.102",
-    "@meshsdk/react": "^2.0.0-beta.2"
+    "@meshsdk/react": "^2.0.0-beta.2",
+    "buffer": "^6.0.3",
+    "cors": "^2.8.6",
+    "crypto-browserify": "^3.12.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "otplib": "^13.4.0",
+    "process": "^0.11.10",
+    "qrcode": "^1.5.4",
+    "qrcode.react": "^4.2.0",
+    "stream-browserify": "^3.0.0"
   }
 }
