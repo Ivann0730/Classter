@@ -1,103 +1,141 @@
 import { useState } from "react";
 import { BrowserWallet, Transaction } from "@meshsdk/core";
+import API_BASE from "./config"; 
 
 export default function StudentCheckin({ activeSession }) {
+  const [studentId, setStudentId] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
   const [sessionKey, setSessionKey] = useState(activeSession?.sessionKey || "");
   const [classId, setClassId] = useState(activeSession?.classId || "CS301");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [connecting, setConnecting] = useState(false);
+  const [looking, setLooking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [txHash, setTxHash] = useState("");
   const [wallet, setWallet] = useState(null);
+  const [walletReady, setWalletReady] = useState(false);
 
-  const connectLace = async () => {
-    setError(""); setConnecting(true);
+  // Step 1 — Student enters ID, system fetches their wallet
+  const lookupStudent = async () => {
+    setError(""); setWalletAddress(""); setWalletReady(false);
+    if (!studentId) { setError("Please enter your Student ID."); return; }
+    setLooking(true);
     try {
-      if (!window.cardano) {
-        setError("No Cardano wallet found. Please install Lace from lace.io");
-        setConnecting(false); return;
+      const res = await fetch(`${API_BASE}/student/${studentId}`);
+      const data = await res.json();
+      if (res.ok) {
+        setWalletAddress(data.walletAddress);
+        // Auto-connect Lace in background
+        await connectWallet(data.walletAddress);
+      } else {
+        setError(data.error);
       }
+    } catch {
+      setError("Could not reach the server. Is the backend running?");
+    }
+    setLooking(false);
+  };
 
-      const walletKey = window.cardano.lace ? "lace"
-        : Object.keys(window.cardano)[0];
-
-      if (!walletKey) {
-        setError("No Cardano wallet detected.");
-        setConnecting(false); return;
-      }
-
-      // Connect using MeshJS BrowserWallet
+  // Step 2 — Connect Lace silently using the saved wallet address
+  const connectWallet = async (savedAddress) => {
+    try {
+      if (!window.cardano) return;
+      const walletKey = window.cardano.lace ? "lace" : Object.keys(window.cardano)[0];
       const connectedWallet = await BrowserWallet.enable(walletKey);
       const addresses = await connectedWallet.getUsedAddresses();
       const addr = addresses.length > 0
         ? addresses[0]
         : (await connectedWallet.getUnusedAddresses())[0];
 
+      // Verify connected wallet matches registered wallet
+      if (addr !== savedAddress) {
+        setError("Connected wallet does not match your registered wallet. Please use the same Lace account you registered with.");
+        return;
+      }
       setWallet(connectedWallet);
-      setWalletAddress(addr);
+      setWalletReady(true);
     } catch (e) {
       setError("Wallet connection failed: " + e.message);
     }
-    setConnecting(false);
   };
 
   const handleCheckin = async () => {
-    setMessage(""); setError(""); setTxHash("");
+  setMessage(""); setError(""); setTxHash("");
 
-    if (!walletAddress || !wallet) {
-      setError("Please connect your Lace wallet first."); return;
-    }
-    if (!sessionKey) {
-      setError("Please enter the session key from the QR code."); return;
+  if (!studentId || !walletAddress || !sessionKey) {
+    setError("Please ensure all fields are filled.");
+    return;
+  }
+
+  setSubmitting(true);
+  try {
+    // Step 1 — Verify with backend
+    const res = await fetch(`${API_BASE}/checkin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletAddress, sessionKey, classId }),
+    });
+    const data = await res.json();
+
+    if (!data.success) {
+      setError(data.error);
+      setSubmitting(false); 
+      return;
     }
 
-    setSubmitting(true);
+    // --- TEMPORARY RECORDING CODE START ---
+    // We set the success message immediately because the backend validated the student.
+    // This allows the student to see they are "checked in" even if the next block fails.
+    setMessage(`Attendance recorded for ${data.studentId} in ${classId}! (Local Sync)`);
+    // --- TEMPORARY RECORDING CODE END ---
 
     try {
-      // Step 1 — Verify session key with backend
-      const res = await fetch("http://192.168.1.22:4000/checkin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress, sessionKey, classId }),
-      });
-      const data = await res.json();
+      if (!window.cardano) throw new Error("No Cardano wallet found.");
+      
+      const walletKey = window.cardano.lace ? "lace" : Object.keys(window.cardano)[0];
+      const connectedWallet = await BrowserWallet.enable(walletKey);
 
-      if (!data.success) {
-        setError(data.error);
-        setSubmitting(false); return;
-      }
-
-      // Step 2 — Build metadata transaction using MeshJS
       const metadata = {
-        674: {
-          app: "ClassTer",
-          class_id: classId,
-          student_id: data.studentId,
-          session_key: sessionKey,
-          timestamp: new Date().toISOString(),
-          network: "preprod",
-        }
+        app: "ClassTer",
+        class_id: classId,
+        student_id: data.studentId,
+        session_key: sessionKey,
+        timestamp: new Date().toISOString(),
+        network: "preprod",
       };
 
-      const tx = new Transaction({ initiator: wallet })
-        .setMetadata(674, metadata[674]);
-
-      // Step 3 — Build, sign and submit
+      const tx = new Transaction({ initiator: connectedWallet }).setMetadata(674, metadata);
       const unsignedTx = await tx.build();
-      const signedTx = await wallet.signTx(unsignedTx);
-      const hash = await wallet.submitTx(signedTx);
+      const signedTx = await connectedWallet.signTx(unsignedTx);
+      const hash = await connectedWallet.submitTx(signedTx);
 
       setTxHash(hash);
-      setMessage(`Attendance recorded for ${data.studentId} in ${classId}!`);
+      // Update message to confirm blockchain sync
+      setMessage(`Attendance recorded and synced to Blockchain!`);
 
-    } catch (e) {
-      setError("Transaction failed: " + e.message);
+    } catch (txError) {
+      console.warn("Blockchain sync failed:", txError.message);
+      // We don't clear the success message here so the student knows the backend got it.
+      setError("Note: Attendance saved locally, but blockchain sync failed: " + txError.message);
     }
 
-    setSubmitting(false);
+  } catch {
+    setError("Could not reach the server.");
+  }
+  setSubmitting(false);
+};
+
+  const inputStyle = {
+    width: "100%", padding: "10px 12px", border: "1px solid #000",
+    fontFamily: "Times New Roman", fontSize: 14,
+    marginBottom: 16, boxSizing: "border-box"
   };
+  const btnStyle = (bg, color) => ({
+    width: "100%", padding: 13, background: bg, color,
+    border: "2px solid #000", fontFamily: "Times New Roman",
+    fontSize: 13, fontWeight: "bold", letterSpacing: 2,
+    cursor: "pointer", marginBottom: 12, textTransform: "uppercase"
+  });
 
   return (
     <div style={{ fontFamily: "Times New Roman", maxWidth: 520, margin: "60px auto", padding: 32, border: "1px solid #000" }}>
@@ -105,11 +143,45 @@ export default function StudentCheckin({ activeSession }) {
         Student Check-In
       </h2>
 
-      <label style={{ display: "block", fontSize: 12, fontWeight: "bold", marginBottom: 4 }}>CLASS</label>
+      {/* Step 1 — Student ID lookup */}
+      <label style={{ display: "block", fontSize: 12, fontWeight: "bold", marginBottom: 4 }}>
+        STEP 1 — ENTER YOUR STUDENT ID
+      </label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <input
+          value={studentId}
+          onChange={e => setStudentId(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && lookupStudent()}
+          placeholder="e.g. 2021-0001"
+          style={{ ...inputStyle, marginBottom: 0, flex: 1 }}
+        />
+        <button
+          onClick={lookupStudent}
+          disabled={looking}
+          style={{ padding: "10px 16px", background: "#000", color: "#fff", border: "none", fontFamily: "Times New Roman", fontWeight: "bold", cursor: "pointer", whiteSpace: "nowrap" }}
+        >
+          {looking ? "..." : "Look Up"}
+        </button>
+      </div>
+
+      {/* Wallet status */}
+      {walletAddress && (
+        <div style={{ padding: "10px 12px", border: `1px solid ${walletReady ? "#000" : "#aaa"}`, fontSize: 11, marginBottom: 16, background: walletReady ? "#f9f9f9" : "#fff" }}>
+          <div style={{ fontWeight: "bold", marginBottom: 4, fontSize: 12 }}>
+            {walletReady ? "✓ Wallet verified" : "⚠ Wallet found but not connected"}
+          </div>
+          <div style={{ wordBreak: "break-all", color: "#555" }}>{walletAddress}</div>
+        </div>
+      )}
+
+      {/* Step 2 — Class and session key */}
+      <label style={{ display: "block", fontSize: 12, fontWeight: "bold", marginBottom: 4 }}>
+        STEP 2 — SELECT CLASS
+      </label>
       <select
         value={classId}
         onChange={e => setClassId(e.target.value)}
-        style={{ width: "100%", padding: "10px 12px", border: "1px solid #000", fontFamily: "Times New Roman", fontSize: 14, marginBottom: 16, boxSizing: "border-box" }}
+        style={{ ...inputStyle }}
       >
         <option value="CS301">CS301 — Blockchain Technology</option>
         <option value="CS201">CS201 — Data Structures</option>
@@ -117,41 +189,36 @@ export default function StudentCheckin({ activeSession }) {
         <option value="CS101">CS101 — Introduction to Programming</option>
       </select>
 
-      <label style={{ display: "block", fontSize: 12, fontWeight: "bold", marginBottom: 4 }}>SESSION KEY (from QR code)</label>
+      <label style={{ display: "block", fontSize: 12, fontWeight: "bold", marginBottom: 4 }}>
+        STEP 3 — ENTER SESSION KEY (from QR code)
+      </label>
       <input
         value={sessionKey}
         onChange={e => setSessionKey(e.target.value.toUpperCase())}
-        placeholder="e.g. Q1MZMDE6NTKYNJA5"
-        style={{ width: "100%", padding: "10px 12px", border: "1px solid #000", fontFamily: "Times New Roman", fontSize: 14, marginBottom: 20, boxSizing: "border-box" }}
+        placeholder="e.g. Q1MZMDE6NTKYNJMX"
+        style={inputStyle}
       />
 
-      <label style={{ display: "block", fontSize: 12, fontWeight: "bold", marginBottom: 4 }}>WALLET</label>
-      {walletAddress ? (
-        <div style={{ padding: "10px 12px", border: "1px solid #000", fontSize: 11, marginBottom: 8, wordBreak: "break-all", background: "#f9f9f9" }}>
-          {walletAddress}
-        </div>
-      ) : (
-        <div style={{ padding: "10px 12px", border: "1px dashed #aaa", fontSize: 12, marginBottom: 8, color: "#aaa" }}>
-          No wallet connected yet
-        </div>
-      )}
-
-      <button
-        onClick={connectLace}
-        disabled={connecting}
-        style={{ width: "100%", padding: 11, background: "#fff", color: "#000", border: "2px solid #000", fontFamily: "Times New Roman", fontSize: 13, fontWeight: "bold", letterSpacing: 1, cursor: "pointer", marginBottom: 16 }}
-      >
-        {connecting ? "Connecting..." : walletAddress ? "↺ Reconnect Lace Wallet" : "Connect Lace Wallet"}
-      </button>
-
+      {/* Check in button */}
       <button
         onClick={handleCheckin}
         disabled={submitting}
-        style={{ width: "100%", padding: 13, background: submitting ? "#555" : "#000", color: "#fff", border: "none", fontFamily: "Times New Roman", fontSize: 13, fontWeight: "bold", letterSpacing: 2, cursor: submitting ? "not-allowed" : "pointer" }}
+        style={btnStyle(submitting ? "#555" : "#000", "#fff")}
       >
         {submitting ? "SUBMITTING TO BLOCKCHAIN..." : "CHECK IN"}
       </button>
 
+      {/* If Lace not connected, show manual connect option */}
+      {walletAddress && !walletReady && (
+        <button
+          onClick={() => connectWallet(walletAddress)}
+          style={btnStyle("#fff", "#000")}
+        >
+          Connect Lace Wallet Manually
+        </button>
+      )}
+
+      {/* Result */}
       {message && (
         <div style={{ marginTop: 20, padding: 16, border: "1px solid #000", background: "#f9f9f9" }}>
           <p style={{ fontWeight: "bold", marginBottom: 8 }}>✓ {message}</p>

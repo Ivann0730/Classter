@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import API_BASE from "./config";
 
 const CLASSES = [
   { id: "CS301", name: "Blockchain Technology", room: "Room 101" },
@@ -60,6 +61,11 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
   const [tab, setTab] = useState("qr");
   const [registeredStudents, setRegisteredStudents] = useState([]);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [enrollments, setEnrollments] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [showAddClass, setShowAddClass] = useState(false);
+  const [newClass, setNewClass] = useState({ id: "", name: "", room: "" });
+  const [classes, setClasses] = useState(CLASSES);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const blockRef = useRef(null);
@@ -68,7 +74,7 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
   // Fetch registered students from backend
   const fetchRegistered = useCallback(async () => {
     try {
-      const res = await fetch("http://192.168.1.22:4000/students");
+      const res = await fetch(`${API_BASE}/students`);
       const data = await res.json();
       setRegisteredStudents(data.students || []);
     } catch {
@@ -92,11 +98,11 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
     setSessionKey(key);
 
     // Register session with backend so other devices can verify it
-    fetch("http://192.168.1.22:4000/students", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ classId: selectedClass.id, sessionKey: key }),
-    }).catch(() => {});
+  fetch(`${API_BASE}/session/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ classId: selectedClass.id, sessionKey: key }),
+  }).catch(() => {});
 
     const payload = JSON.stringify({
       class_id: selectedClass.id,
@@ -137,11 +143,97 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
   }, []);
 
   const startSession = () => {
-    setStudents(MOCK_STUDENTS);
-    setSessionTime(0);
-    setSessionActive(true);
-    setTab("qr");
-  };
+  setStudents(MOCK_STUDENTS); 
+  setSessionTime(0);
+  setSessionActive(true);
+  setTab("qr");
+};
+  const fetchEnrollments = useCallback(async () => {
+  try {
+    const res = await fetch(`${API_BASE}/enrollments/${selectedClass.id}`);
+    const data = await res.json();
+    setEnrollments(data.enrollments || []);
+  } catch {}
+}, [selectedClass]);
+
+const fetchCheckins = useCallback(async () => {
+  try {
+    const res = await fetch(`${API_BASE}/checkins/${selectedClass.id}`);
+    const data = await res.json();
+    setCheckins(data.checkins || []);
+  } catch {}
+}, [selectedClass]);
+
+const handleEnrollmentAction = async (studentId, action) => {
+  try {
+    await fetch(`${API_BASE}/enrollment/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentId, classId: selectedClass.id, action }),
+    });
+    fetchEnrollments();
+  } catch {}
+};
+
+const handleAddClass = async () => {
+  if (!newClass.id || !newClass.name || !newClass.room) return;
+  try {
+    const res = await fetch(`${API_BASE}/classes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newClass),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setClasses(data.classes);
+      setNewClass({ id: "", name: "", room: "" });
+      setShowAddClass(false);
+    }
+  } catch {}
+};
+useEffect(() => {
+  fetchEnrollments();
+  
+  // Custom fetch to update the Roster UI when check-ins arrive
+ const updateRosterWithCheckins = async () => {
+  try {
+    const res = await fetch(`${API_BASE}/checkins/${selectedClass.id}`);
+    const data = await res.json();
+    
+    // Defensive check: handle both {checkins: []} and direct []
+    const backendCheckins = data.checkins || (Array.isArray(data) ? data : []);
+    
+    setCheckins(backendCheckins);
+
+    setStudents(prevStudents => 
+      prevStudents.map(student => {
+        // Log this to your console to see if IDs are actually matching
+        const record = backendCheckins.find(c => 
+          c.studentId.toString().trim() === student.id.toString().trim()
+        );
+        
+        if (record) {
+          return { 
+            ...student, 
+            status: "present", 
+            time: new Date(record.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+          };
+        }
+        return student;
+      })
+    );
+  } catch (err) {
+    console.error("Failed to sync roster:", err);
+  }
+};
+
+  updateRosterWithCheckins();
+  
+  // Optional: Set an interval to poll for new check-ins every 5 seconds
+  const interval = setInterval(updateRosterWithCheckins, 5000);
+  return () => clearInterval(interval);
+
+}, [selectedClass, fetchEnrollments]); // Removed fetchCheckins from deps to avoid loops
 
   const endSession = () => {
     setSessionActive(false);
@@ -306,11 +398,16 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
 
           <div className="db-grid">
             <div className="db-card">
-              <div className="db-tabs">
-                <button className={`db-tab ${tab === "qr" ? "active" : ""}`} onClick={() => setTab("qr")}>QR Code</button>
-                <button className={`db-tab ${tab === "roster" ? "active" : ""}`} onClick={() => setTab("roster")}>Roster ({present}/{students.length})</button>
-                <button className={`db-tab ${tab === "registered" ? "active" : ""}`} onClick={() => { setTab("registered"); fetchRegistered(); }}>Registered</button>
-              </div>
+            <div className="db-tabs">
+              <button className={`db-tab ${tab === "qr" ? "active" : ""}`} onClick={() => setTab("qr")}>QR Code</button>
+              <button className={`db-tab ${tab === "checkins" ? "active" : ""}`} onClick={() => { setTab("checkins"); fetchCheckins(); }}>
+                Check-Ins ({checkins.length})
+              </button>
+              <button className={`db-tab ${tab === "enrollments" ? "active" : ""}`} onClick={() => { setTab("enrollments"); fetchEnrollments(); }}>
+                Enrollments ({enrollments.filter(e => e.status === "pending").length} pending)
+              </button>
+              <button className={`db-tab ${tab === "registered" ? "active" : ""}`} onClick={() => { setTab("registered"); fetchRegistered(); }}>Registered</button>
+            </div>
 
               {tab === "qr" && (
                 <div className="qr-wrap">
