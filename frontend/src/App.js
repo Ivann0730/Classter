@@ -7,6 +7,7 @@ import TransactionDemo from "./TransactionDemo";
 export default function App() {
   const [page, setPage] = useState("teacher");
   const [activeSession, setActiveSession] = useState(null);
+  // activeSession = { sessionKey, classId, expiresAt } or null
 
   const navStyle = (p) => ({
     padding: "8px 20px", cursor: "pointer", fontFamily: "Times New Roman",
@@ -18,11 +19,10 @@ export default function App() {
 
   return (
     <div>
-      <div style={{ display: "flex", borderBottom: "2px solid #000", padding: "16px 28px 0", flexWrap: "wrap", gap: 0 }}>
+      <div style={{ display: "flex", borderBottom: "2px solid #000", padding: "16px 28px 0" }}>
         <button style={navStyle("teacher")} onClick={() => setPage("teacher")}>Teacher Dashboard</button>
-        <button style={navStyle("register")} onClick={() => setPage("register")}>Register Wallet</button>
-        <button style={navStyle("checkin")} onClick={() => setPage("checkin")}>Student Check-In</button>
-        <button style={{ ...navStyle("demo"), borderRight: "1px solid #000" }} onClick={() => setPage("demo")}>Transaction Demo</button>
+        <button style={navStyle("register")} onClick={() => setPage("register")}>Register Student</button>
+        <button style={{ ...navStyle("checkin"), borderRight: "1px solid #000" }} onClick={() => setPage("checkin")}>Student Check-In/Check-Out</button>
         {activeSession && (
           <span style={{
             marginLeft: "auto", alignSelf: "center",
@@ -35,9 +35,16 @@ export default function App() {
         )}
       </div>
 
-      {page === "teacher" && <TeacherDashboard activeSession={activeSession} setActiveSession={setActiveSession} />}
+      {page === "teacher" && (
+        <TeacherDashboard
+          activeSession={activeSession}
+          setActiveSession={setActiveSession}
+        />
+      )}
       {page === "register" && <RegisterStudent />}
-      {page === "checkin" && <StudentCheckin activeSession={activeSession} />}
+      {page === "checkin" && (
+        <StudentCheckin activeSession={activeSession} />
+      )}
       {page === "demo" && <TransactionDemo />}
     </div>
   );
