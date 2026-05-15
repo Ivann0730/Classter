@@ -8,6 +8,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id TEXT UNIQUE NOT NULL,
     name TEXT,
+    wallet_address TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
