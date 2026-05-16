@@ -41,20 +41,22 @@ app.get('/students', (req, res) => {
 });
 
 app.post('/students/register', (req, res) => {
-  const { student_id, name } = req.body;
+  const { student_id, name, wallet_address } = req.body;
   if (!student_id) return res.status(400).json({ error: 'student_id required' });
   try {
-    db.prepare('INSERT OR REPLACE INTO students (student_id, name) VALUES (?, ?)').run(student_id, name || student_id);
+    db.prepare('INSERT OR REPLACE INTO students (student_id, name, wallet_address) VALUES (?, ?, ?)')
+      .run(student_id, name || student_id, wallet_address || null);
     res.json({ success: true, message: `Student ${student_id} registered successfully` });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.get('/students/:studentId', (req, res) => {
-  const student = db.prepare('SELECT * FROM students WHERE student_id = ?').get(req.params.studentId);
-  if (!student) return res.status(404).json({ error: 'Student not found. Please register first.' });
-  res.json(student);
+app.get('/students/:studentId/wallet', (req, res) => {
+  const student = db.prepare('SELECT wallet_address FROM students WHERE student_id = ?').get(req.params.studentId);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  if (!student.wallet_address) return res.status(404).json({ error: 'No wallet registered for this student' });
+  res.json({ wallet_address: student.wallet_address });
 });
 
 // ── SESSIONS ──────────────────────────────────────────────────────────────────
