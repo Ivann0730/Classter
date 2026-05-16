@@ -1,7 +1,5 @@
-import { useTeacherWallet } from "../hooks/useTeacherWallet";
-
-export default function TeacherWalletBar() {
-  const { wallet, walletAddress, connecting, error, connectWallet, disconnectWallet } = useTeacherWallet();
+export default function TeacherWalletBar(props) {
+  const { wallet, walletAddress, connecting, error, connectWallet, disconnectWallet } = props;
 
   return (
     <div style={{

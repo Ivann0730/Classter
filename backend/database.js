@@ -43,6 +43,15 @@ module.exports = function(dbPath = path.join(__dirname, 'classter.db')) {
       status TEXT DEFAULT 'present',
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
+
+    CREATE TABLE IF NOT EXISTS signatures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      student_id TEXT NOT NULL,
+      signed_tx TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (session_id) REFERENCES sessions(id)
+    );
   `);
 
   const studentColumns = db.prepare("PRAGMA table_info(students)").all();

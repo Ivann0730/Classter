@@ -64,8 +64,19 @@ export default function StudentCheckin({ activeSession }) {
         const tx = new Transaction({ initiator: wallet }).setMetadata(674, metadata);
         const unsignedTx = await tx.build();
         const signedTx = await wallet.signTx(unsignedTx);
-        const hash = await wallet.submitTx(signedTx);
-        setTxHash(hash);
+
+        // Send the student's signature to the backend for later aggregation by the teacher.
+        try {
+          await fetch(`${API_BASE}/session/sign`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionKey, studentId, signedTx }),
+          });
+          // Indicate to the student that their signature was recorded (no chain submission yet)
+          setMessage("Signature recorded — teacher will submit the attendance transaction.");
+        } catch (e) {
+          console.warn('Failed to send signature to backend', e.message);
+        }
 
       } catch (txErr) {
         // Check-in recorded even if tx fails

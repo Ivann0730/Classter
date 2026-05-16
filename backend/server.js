@@ -170,6 +170,31 @@ app.post('/checkin', (req, res) => {
   res.json({ success: true, action: 'checkin', studentId, name: student.name, checkIn: now, checkOut: null });
 });
 
+// Receive a student's signed transaction (no submission) for later aggregation by the teacher
+app.post('/session/sign', (req, res) => {
+  const { sessionKey, studentId, signedTx } = req.body;
+  if (!sessionKey || !studentId || !signedTx) return res.status(400).json({ error: 'sessionKey, studentId and signedTx required' });
+
+  const session = db.prepare('SELECT * FROM sessions WHERE session_key = ?').get(sessionKey);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  try {
+    db.prepare('INSERT INTO signatures (session_id, student_id, signed_tx) VALUES (?, ?, ?)')
+      .run(session.id, studentId, signedTx);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Fetch all stored signatures for a session (teacher use)
+app.get('/session/signatures/:sessionKey', (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE session_key = ?').get(req.params.sessionKey);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const sigs = db.prepare('SELECT student_id, signed_tx, created_at FROM signatures WHERE session_id = ?').all(session.id);
+  res.json({ success: true, signatures: sigs });
+});
+
 app.get('/attendance/:sessionKey', (req, res) => {
   const session = db.prepare('SELECT * FROM sessions WHERE session_key = ?').get(req.params.sessionKey);
   if (!session) return res.status(404).json({ error: 'Session not found' });
