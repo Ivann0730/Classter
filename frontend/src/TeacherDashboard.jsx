@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { BrowserWallet, Transaction } from "@meshsdk/core";
+import { buildAttendanceMetadataChunks, buildChunkMetadata } from "./Utils/splitMetadata";
 import API_BASE from "./config";
 
 const DEFAULT_CLASSES = [
@@ -29,7 +30,8 @@ function generateQRDataURL(text, size = 220) {
   return canvas.toDataURL();
 }
 
-export default function TeacherDashboard({ activeSession, setActiveSession }) {
+
+export default function TeacherDashboard({ activeSession, setActiveSession, teacherWallet }) {
   const [classes, setClasses] = useState(DEFAULT_CLASSES);
   const [selectedClass, setSelectedClass] = useState(DEFAULT_CLASSES[0]);
   const [sessionActive, setSessionActive] = useState(false);
@@ -156,47 +158,60 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
 
       setAttendance(data.attendance || []);
 
-      // Build metadata from full attendance list
-      const metadata = {
+      const { wallet, walletAddress, connectWallet } = teacherWallet;
+      if (!wallet) {
+      alert("Wallet session expired — please click Disconnect and reconnect your Lace wallet, then try again.");
+      setSubmittingTx(false);
+      return;
+      }
+
+      const baseInfo = {
         app: "ClassTer",
         class_id: selectedClass.class_id,
         class_name: selectedClass.name,
         session_key: sessionKey,
         date: new Date().toISOString().slice(0, 10),
         total_students: data.attendance.length,
-        attendance: data.attendance.map(a => ({
-          id: a.student_id,
-          name: a.student_name || a.student_id,
-          in: a.check_in_time ? new Date(a.check_in_time).toLocaleTimeString() : null,
-          out: a.check_out_time ? new Date(a.check_out_time).toLocaleTimeString() : null,
-        })),
       };
 
-      // Connect teacher wallet
-      if (!window.cardano) {
-        alert("Please install Lace wallet to submit attendance to the blockchain.");
-        setSubmittingTx(false);
-        return;
+      const attendanceRecords = data.attendance.map(a => ({
+        id: a.student_id,
+        name: a.student_name || a.student_id,
+        in: a.check_in_time ? new Date(a.check_in_time).toLocaleTimeString() : null,
+        out: a.check_out_time ? new Date(a.check_out_time).toLocaleTimeString() : null,
+      }));
+
+      // Split into chunks if needed
+      const chunks = buildAttendanceMetadataChunks(baseInfo, attendanceRecords);
+      console.log(`Attendance split into ${chunks.length} transaction(s)`);
+
+      const txHashes = [];
+
+      for (let i = 0; i < chunks.length; i++) {
+        const metadata = buildChunkMetadata(baseInfo, chunks[i], i, chunks.length);
+
+        const tx = new Transaction({ initiator: wallet }).setMetadata(674, metadata);
+        const unsignedTx = await tx.build();
+        const signedTx = await wallet.signTx(unsignedTx);
+        const hash = await wallet.submitTx(signedTx);
+
+        txHashes.push(hash);
+        console.log(`Transaction ${i + 1}/${chunks.length} submitted: ${hash}`);
+
+        // Small delay between transactions
+        if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 2000));
       }
 
-      const walletKey = window.cardano.lace ? "lace" : Object.keys(window.cardano)[0];
-      const wallet = await BrowserWallet.enable(walletKey);
-
-      // Build and submit transaction
-      const tx = new Transaction({ initiator: wallet }).setMetadata(674, metadata);
-      const unsignedTx = await tx.build();
-      const signedTx = await wallet.signTx(unsignedTx);
-      const txHash = await wallet.submitTx(signedTx);
-
-      // Save tx hash to database
+      // Save all tx hashes to backend
       await fetch(`${API_BASE}/session/tx`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionKey, txHash }),
+        body: JSON.stringify({ sessionKey, txHash: txHashes.join(",") }),
       });
 
       if (setActiveSession) setActiveSession(null);
-      alert(`✓ Attendance recorded on Cardano!\n\nTransaction Hash:\n${txHash}\n\nView at:\nhttps://preprod.cardanoscan.io/transaction/${txHash}`);
+      const hashList = txHashes.map((h, i) => `Tx ${i + 1}: ${h}`).join("\n");
+      alert(`✓ Attendance recorded on Cardano!\n\n${chunks.length > 1 ? `Split into ${chunks.length} transactions:\n${hashList}` : `Transaction Hash:\n${txHashes[0]}\n\nView at:\nhttps://preprod.cardanoscan.io/transaction/${txHashes[0]}`}`);
       fetchSessions();
 
     } catch (e) {
@@ -536,5 +551,6 @@ export default function TeacherDashboard({ activeSession, setActiveSession }) {
         </div>
       </div>
     </>
+    
   );
-} 
+}
