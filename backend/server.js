@@ -179,6 +179,16 @@ app.post('/session/sign', (req, res) => {
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
   try {
+    // Basic server-side validation: ensure signedTx contains the studentId and classId strings
+    const buf = Buffer.from(signedTx, 'hex');
+    const classId = req.body.classId || '';
+    const containsStudent = buf.includes(Buffer.from(String(studentId)));
+    const containsClass = classId ? buf.includes(Buffer.from(String(classId))) : true;
+
+    if (!containsStudent || !containsClass) {
+      return res.status(400).json({ error: 'signedTx failed validation (metadata mismatch)' });
+    }
+
     db.prepare('INSERT INTO signatures (session_id, student_id, signed_tx) VALUES (?, ?, ?)')
       .run(session.id, studentId, signedTx);
     res.json({ success: true });
@@ -193,6 +203,62 @@ app.get('/session/signatures/:sessionKey', (req, res) => {
   if (!session) return res.status(404).json({ error: 'Session not found' });
   const sigs = db.prepare('SELECT student_id, signed_tx, created_at FROM signatures WHERE session_id = ?').all(session.id);
   res.json({ success: true, signatures: sigs });
+});
+
+// Merge stored student signatures into the provided unsigned tx and return a partial signed tx
+const CSL = (() => {
+  try { return require('@emurgo/cardano-serialization-lib-nodejs'); } catch (e) { return null; }
+})();
+
+app.post('/session/merge', (req, res) => {
+  const { sessionKey, unsignedTxHex } = req.body;
+  if (!sessionKey || !unsignedTxHex) return res.status(400).json({ error: 'sessionKey and unsignedTxHex required' });
+
+  if (!CSL) return res.status(500).json({ error: 'Cardano serialization lib not available on server' });
+
+  const session = db.prepare('SELECT * FROM sessions WHERE session_key = ?').get(sessionKey);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const sigs = db.prepare('SELECT signed_tx FROM signatures WHERE session_id = ?').all(session.id);
+  try {
+    const unsignedTx = CSL.Transaction.from_bytes(Buffer.from(unsignedTxHex, 'hex'));
+    const unsignedBody = unsignedTx.body();
+    const aux = unsignedTx.auxiliary_data();
+
+    // Build merged witness set
+    const mergedWits = CSL.TransactionWitnessSet.new();
+    const baseWits = unsignedTx.witness_set();
+    if (baseWits && baseWits.vkeys()) mergedWits.set_vkeys(baseWits.vkeys());
+
+    for (const row of sigs) {
+      try {
+        const stx = CSL.Transaction.from_bytes(Buffer.from(row.signed_tx, 'hex'));
+        // Ensure the signed tx body matches the unsigned body
+        if (!Buffer.from(stx.body().to_bytes()).equals(Buffer.from(unsignedBody.to_bytes()))) {
+          continue; // skip mismatched signature
+        }
+        const sw = stx.witness_set();
+        if (!sw) continue;
+        const vkeys = sw.vkeys();
+        if (!vkeys) continue;
+        // Append vkeys to mergedWits
+        const targetVkeys = mergedWits.vkeys() || CSL.Vkeywitnesses.new();
+        for (let i = 0; i < vkeys.len(); i++) {
+          targetVkeys.add(vkeys.get(i));
+        }
+        mergedWits.set_vkeys(targetVkeys);
+      } catch (e) {
+        console.warn('Skipping invalid stored signature', e.message);
+      }
+    }
+
+    const mergedTx = CSL.Transaction.new(unsignedBody, mergedWits, aux);
+    const mergedHex = Buffer.from(mergedTx.to_bytes()).toString('hex');
+    res.json({ success: true, partialTx: mergedHex });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/attendance/:sessionKey', (req, res) => {
