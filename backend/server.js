@@ -2,15 +2,25 @@ const express = require('express');
 const cors = require('cors');
 const { authenticator } = require('otplib');
 const { BlockFrostAPI } = require('@blockfrost/blockfrost-js');
-const db = require('./database');
+const path = require('path');
 require('dotenv').config();
+
+const dbFile = process.env.DB_FILE || 'classter.db';
+const db = require('./database')(path.join(__dirname, dbFile));
 
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+const blockfrostProjectId = process.env.BLOCKFROST_KEY;
+if (!blockfrostProjectId) {
+  console.error('ERROR: Missing BLOCKFROST_KEY environment variable.');
+  console.error('Set BLOCKFROST_KEY in Railway variables or in a local .env file.');
+  process.exit(1);
+}
+
 const blockfrost = new BlockFrostAPI({
-  projectId: process.env.BLOCKFROST_KEY,
+  projectId: blockfrostProjectId,
   network: 'preprod',
 });
 
@@ -183,4 +193,5 @@ app.get('/block', async (req, res) => {
   }
 });
 
-app.listen(4000, '0.0.0.0', () => console.log('ClassTer backend running on http://0.0.0.0:4000'));
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, '0.0.0.0', () => console.log(`ClassTer backend running on http://0.0.0.0:${PORT}`));
