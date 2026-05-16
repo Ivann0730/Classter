@@ -2,7 +2,7 @@ this file will contain all commands to run this repository:
 
 # install the necessary packages
 '''
- npm install @meshsdk/core @meshsdk/react @blockfrost/blockfrost-js stream-browserify crypto-browserify buffer process @craco/craco qrcode.react 
+npm install @meshsdk/core @meshsdk/react @blockfrost/blockfrost-js stream-browserify crypto-browserify buffer process @craco/craco qrcode.react 
  '''
 
  # install for backend

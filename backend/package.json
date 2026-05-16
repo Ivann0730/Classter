@@ -13,7 +13,7 @@
   "dependencies": {
     "@blockfrost/blockfrost-js": "^6.1.1",
     "@meshsdk/core": "^1.9.0-beta.102",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^12.10.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
