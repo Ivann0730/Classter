@@ -1,4 +1,3 @@
-javascript
 import { useTeacherWallet } from "../hooks/useTeacherWallet";
 
 export default function TeacherWalletBar() {

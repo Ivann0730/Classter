@@ -43,6 +43,12 @@ db.exec(`
   );
 `);
 
+const studentColumns = db.prepare("PRAGMA table_info(students)").all();
+if (!studentColumns.some(column => column.name === 'wallet_address')) {
+  db.prepare('ALTER TABLE students ADD COLUMN wallet_address TEXT').run();
+  console.log('Migrated students table: added wallet_address column.');
+}
+
 const classCount = db.prepare('SELECT COUNT(*) as count FROM classes').get();
 if (classCount.count === 0) {
   const insertClass = db.prepare('INSERT OR IGNORE INTO classes (class_id, name, room) VALUES (?, ?, ?)');
