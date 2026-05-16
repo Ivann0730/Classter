@@ -1,70 +1,130 @@
-# Getting Started with Create React App
+﻿# ClassTer Setup Guide
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This repository contains the ClassTer frontend app, and the full software stack includes a backend service in `backend/`.
 
-## Available Scripts
+## Prerequisites
 
-In the project directory, you can run:
+- Node.js 18.x or later
+- npm 10.x or later
+- A Cardano wallet browser extension such as Lace
+- A Blockfrost project ID for Cardano preprod access
 
-### `npm start`
+## Backend Setup
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+1. Open a terminal and go to the backend folder:
+   ```powershell
+   cd ..\backend
+   ```
+2. Install backend dependencies:
+   ```powershell
+   npm install
+   ```
+3. Create a `.env` file in `backend/` with your Blockfrost key:
+   ```text
+   BLOCKFROST_KEY=your_blockfrost_project_id
+   ```
+4. Start the backend server:
+   ```powershell
+   node server.js
+   ```
+5. The backend runs at:
+   - `http://localhost:4000`
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+> The backend schema is created automatically in `backend/classter.db` when the server starts.
 
-### `npm test`
+## Frontend Setup
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+1. Open a new terminal and go to the frontend folder:
+   ```powershell
+   cd frontend
+   ```
+2. Install frontend dependencies:
+   ```powershell
+   npm install
+   ```
+3. Start the frontend development server:
+   ```powershell
+   npm start
+   ```
+4. Open the app in your browser:
+   - `http://localhost:3000`
 
-### `npm run build`
+## Available Frontend Commands
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+- `npm start` — start the development server
+- `npm run build` — build the production app
+- `npm test` — run tests
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## How to Use
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+- Register students and wallet addresses using the frontend UI.
+- Start a teacher session to generate a QR code.
+- Students can check in using the session key.
+- Attendance, sessions, and students are stored in SQLite.
 
-### `npm run eject`
+## Notes
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+- If wallet connection fails, make sure Lace is installed and enabled in your browser.
+- If the backend fails due to schema issues, restart the backend after applying any code fixes.
+- The frontend uses CRACO and custom polyfills for Cardano wallet compatibility.
+- When deploying the frontend separate from the backend, set `REACT_APP_API_BASE` to your backend URL.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## Railway deployment notes
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+Railway can host the backend service, but be aware that `better-sqlite3` stores data in a local SQLite file. Railway's filesystem is ephemeral, so this setup is good for testing only. For a production-quality deployment, consider a managed database instead of SQLite.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### Deploying the backend on Railway
 
-## Learn More
+1. Install Railway CLI and log in:
+   ```bash
+   npm install -g railway
+   railway login
+   ```
+2. From the `backend/` folder, run:
+   ```bash
+   railway init
+   railway up
+   ```
+3. Add your Blockfrost key to Railway environment variables:
+   ```bash
+   railway variables set BLOCKFROST_KEY your_blockfrost_project_id
+   ```
+4. If you want to keep the SQLite file name configurable, also set:
+   ```bash
+   railway variables set DB_FILE classter.db
+   ```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+### Frontend environment
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+When the backend is deployed, configure your frontend deployment to use:
 
-### Code Splitting
+```bash
+REACT_APP_API_BASE=https://your-railway-backend-url
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## Deploying the frontend to Vercel
 
-### Analyzing the Bundle Size
+1. Create a new Vercel project and connect your GitHub repository.
+2. In Vercel, set the root directory to `frontend`.
+3. Set the environment variable:
+   ```bash
+   REACT_APP_API_BASE=https://your-railway-backend-url
+   ```
+4. Use these Vercel settings:
+   - Install command: `npm install`
+   - Build command: `npm run build`
+   - Output directory: `build`
+5. Deploy the project.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+> If you use the Vercel CLI from inside `frontend/`, run:
+>
+> ```bash
+> cd frontend
+> vercel
+> ```
 
-### Making a Progressive Web App
+## Helpful Links
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- Blockfrost: https://blockfrost.io
+- Cardano Lace Wallet: https://lace.io
+- React: https://reactjs.org

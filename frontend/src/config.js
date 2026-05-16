@@ -1,2 +1,3 @@
-const API_BASE = "http://localhost:4000";
+﻿const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000";
 export default API_BASE;
+
